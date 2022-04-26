@@ -1,0 +1,1806 @@
+---
+title: "Monthly Arraignment Report"
+author:
+- Strategic Planning & Policy
+- Manhattan District Attorney's Office
+fontsize: 10pt
+output:
+  pdf_document:
+    df_print: paged
+  word_document: default
+  html_document:
+    df_print: paged
+header-includes:
+- \usepackage{lscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
+- \usepackage{setspace}
+geometry: margin = 1.5cm
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+rm(list=ls())
+
+library(RODBC); library(lubridate); library(dplyr); library(forcats); library(janitor); library(scales); library(kableExtra); library(tidyr); library(tidyverse)
+
+setwd("P:/Bureau Data/PLANNING/Management Reports/R Reports/Monthly Arraignment Report")
+
+
+#connect to DMS#
+con <- odbcConnect('dms')
+
+#pulls query data from sql#
+data <- sqlQuery(con, "SELECT *
+               FROM ##arc")
+dat <- sqlQuery(con, "SELECT *
+                      FROM ##dat ")
+
+#source('bailprep.R')
+
+
+# data <-
+#   merge(data, final %>% select(defendantid, bailrequest),
+#         by.x = 'defendantID',
+#         by.y = 'defendantid',
+#         all.x = T) %>%
+#   mutate(bailReqAmt = ifelse(is.na(bailReqAmt), bailrequest, bailReqAmt)) %>%
+#   select(-bailrequest)
+
+
+dats <- dat %>% 
+        mutate(arcYear = year(coalesce(noArraignDate, arcDate)) %>% 
+                 as.character(.),
+               arcMonth = format(floor_date(coalesce(noArraignDate, arcDate), unit = 'month'), '%m'), 
+               mvi = ifelse(scrTopCat %in% c('Misdemeanor', 'Violation/Infraction'), 1, 0)) %>% 
+  filter(coalesce(noArraignDate, arcDate)<'2022-03-01' & coalesce(noArraignDate, arcDate) > '2019-12-31' ) # up to end of last month cases only - make sure to change when rerunning
+
+
+
+arc <-
+  data %>% 
+  filter(arcDate< '2022-03-01' & arcDate > '2019-12-31') %>% #up to end of last month cases only (make sure to change when re-running)
+  mutate(arcYear = year(arcDate),
+         arcMonth = format(floor_date(arcDate, unit = 'month'), '%m'),
+         plea = ifelse(arcDispo == 'Plea', 1, 0),
+         dsm = ifelse(arcDispo == 'Dismissed', 1, 0),
+         acd = ifelse(grepl('Adjourned', arcDispo), 1, 0),
+         ror = ifelse(grepl('ROR', arcRelease), 1, 0),
+         supervised = ifelse(arcRelease == 'Supervised Release', 1, 0),
+         mvi = ifelse(scrTopCat %in% c('Misdemeanor', 'Violation/Infraction'), 1, 0)
+         )
+
+chgs <- arc %>% 
+        select(scrTopCMID, scrTopChg, scrTopDetail) %>% 
+        unique(.)
+ 
+
+# saveRDS(data, 'data.RDS')
+# saveRDS(dats, 'dats.RDS')
+# saveRDS(arc, 'arc.RDS')
+# saveRDS(chgs, 'chgs.RDS')
+```
+
+
+```{r, echo = F}
+##YTD CODE FOR WEEKLY REPORT
+  # mutate(yearsago = year(Sys.Date()) - arcYear) %>%
+  # filter(arcDate >= (floor_date(Sys.Date(), "year")-years(yearsago)),
+  #   arcDate <= (Sys.Date() - years(yearsago)))
+  # mutate_each(funs(prettyNum(as.numeric(.), big.mark=","))) %>% 
+  
+dat_m <-
+  dats %>%
+  filter(mvi==1) %>%
+  group_by(arcYear, arcMonth) %>%
+  summarise(dats = n_distinct(defendantID)) %>%
+  spread(arcYear, dats) %>%
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>%
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Month', 'Volume', 2:ncol(.)) %>%
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>%
+  mutate(Month = factor(Month, levels = c('2020', '2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>%
+  arrange(Month)  
+  
+
+datbwo_m <-
+  dats %>% 
+  filter(mvi==1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(bwo = n_distinct(defendantID[isBWO==1])) %>% 
+  spread(arcYear, bwo) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row")%>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+    mutate_at(vars(5), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+dat_f <- 
+  dats %>% 
+  filter(scrTopCat == 'Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(dats = n_distinct(defendantID)) %>% 
+  spread(arcYear, dats) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate(`2020` = ifelse(is.na(`2020`), 0, `2020`)) %>% 
+  mutate('% Change (2021 - 2022)' = (`2022`-`2021`)/`2021`) %>% 
+  mutate('% Change (2021 - 2022)' = 
+           ifelse(is.na(`% Change (2021 - 2022)`) | is.infinite(`% Change (2021 - 2022)`), 
+                  '-', 
+                  percent(`% Change (2021 - 2022)`))) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+ 
+datbwo_f <-
+  dats %>% 
+  filter(scrTopCat == 'Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(bwo = n_distinct(defendantID[isBWO==1])) %>% 
+  spread(arcYear, bwo) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = (`2022`-`2021`)/`2021`) %>% 
+  mutate("2021" = replace_na(`2021`,'-')) %>% 
+  mutate("% Change (2021 - 2022)" = replace_na(`% Change (2021 - 2022)`,'-')) %>%
+  mutate("% Change (2021 - 2022)" = replace_na(`% Change (2021 - 2022)`,'-')) %>%
+  mutate_at(vars(5), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+  mutate_at(vars(5), list(~sprintf("%.2f%%", 100*as.numeric(.)))) %>%  
+  mutate_at(vars(5), list(~ifelse(grepl('NA%', .), '-', .))) %>% 
+# mutate('% Change (2021 - 2022)' = ifelse(is.na(`% Change (2021 - 2022)`)|is.infinite(`% Change (2021 - 2022)`), '-', percent(`% Change (2021 - 2022)`))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>% 
+#  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+#  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NaN%', .), '-', .))) %>% 
+  arrange(Year)
+
+
+```
+
+
+```{r, echo=F}
+vol_m <- 
+  arc %>% 
+  filter(mvi==1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = n_distinct(defendantID)) %>% 
+  spread(arcYear, volume) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+```
+
+```{r, echo=F}
+#misdemeanor bail #
+
+br_m <- 
+  arc %>% 
+  filter(scrTopCat == 'Misdemeanor'& bailReqAmt > 100) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(bailreq =round(median(bailReqAmt,na.rm = TRUE),0)) %>% 
+  spread(arcYear, bailreq) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 - 2022, USD)' = `2022`-`2021`) %>% 
+  gather('Year', 'bailreq', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>% 
+  mutate(bailreq = dollar(bailreq)) %>% 
+  spread(arcMonth, bailreq, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 - 2022, USD)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(.=='$NA', '-', .))) %>% 
+  arrange(Year) 
+
+
+bs_m <- 
+  arc %>% 
+  filter(scrTopCat == 'Misdemeanor' & bailSetAmt > 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(bailset = median(bailSetAmt,na.rm = TRUE)) %>% 
+  spread(arcYear, bailset) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 - 2022, USD)' = `2022`-`2021`) %>% 
+  gather('Year', 'bailset', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  mutate(bailset = dollar(bailset)) %>% 
+  spread(arcMonth, bailset, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 - 2022, USD)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(.=='$NA', '-', .))) %>% 
+  arrange(Year)
+
+
+  
+br_m_num <- 
+  arc %>% 
+  filter(scrTopCat == 'Misdemeanor'& bailReqAmt > 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = n_distinct(defendantID)) %>% 
+  spread(arcYear, volume) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy = 0.01)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+ # mutate_at(vars(2,3), list(~comma(.))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+bs_m_num <- 
+  arc %>% 
+  filter(scrTopCat == 'Misdemeanor'& bailSetAmt > 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = n_distinct(defendantID)) %>% 
+  spread(arcYear, volume) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy = 0.01)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+ # mutate_at(vars(2,3), list(~comma(.))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+```
+
+
+```{r, echo=F}
+
+#misdemeanor dispos#
+
+plea_mm_num <- 
+   arc %>% 
+  filter(scrTopCat == 'Misdemeanor', arcTopCat=='Misdemeanor')  %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+plea_mm <- 
+  arc %>% 
+  filter(scrTopCat == 'Misdemeanor', arcTopCat=='Misdemeanor') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Misdemeanor') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>%
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+ mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>% 
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+plea_mm_final <-bind_rows(plea_mm_num, plea_mm)
+plea_mm_final[is.na(plea_mm_final)] = '-'
+
+
+
+plea_mv_num <- 
+   arc %>% 
+  filter(scrTopCat == 'Misdemeanor', arcTopCat=='Violation/Infraction')  %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+ # mutate_at(vars(2,3), list(~comma(.))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+plea_mv <- 
+  arc %>% 
+  filter(scrTopCat == 'Misdemeanor', arcTopCat=='Violation/Infraction') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Misdemeanor') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>% 
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+plea_mv_final <-bind_rows(plea_mv_num, plea_mv)
+plea_mv_final[is.na(plea_mv_final)] = '-'
+
+
+
+
+plea_vv_num <- 
+   arc %>% 
+  filter(scrTopCat == 'Violation/Infraction', arcTopCat=='Violation/Infraction')  %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+  arrange(Year)
+
+
+
+plea_vv <- 
+  arc %>% 
+  filter(scrTopCat == 'Violation/Infraction', arcTopCat=='Violation/Infraction') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Violation/Infraction') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+ mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+
+plea_vv_final <-bind_rows(plea_vv_num, plea_vv)
+plea_vv_final[is.na(plea_vv_final)] = '-'
+
+
+
+
+acd_m_num <- 
+   arc %>% 
+  filter(mvi==1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(acd, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+acd_m <- 
+  arc %>% 
+  filter(mvi==1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(acd, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat=='Misdemeanor') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+   mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+acd_m_final <-bind_rows(acd_m_num, acd_m)
+acd_m_final[is.na(acd_m_final)] = '-'
+
+
+
+acd_v <- 
+  arc %>% 
+  filter(scrTopCat=='Violation/Infraction') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(acd, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat=='Violation/Infraction') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+   mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+   mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+
+
+
+dsm_m_num <- 
+   arc %>% 
+  filter(mvi==1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(dsm, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+dsm_m <- 
+  arc %>% 
+  filter(mvi==1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(dsm, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat=='Misdemeanor') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+     mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('[.][0-9]{1,}[0][%]', .), gsub('(.*)([0])([%])', '\\1\\3', .), .))) %>% 
+  arrange(Year)
+
+
+dsm_m_final <-bind_rows(dsm_m_num, dsm_m)
+dsm_m_final[is.na(dsm_m_final)] = '-'
+
+dsm_v <- 
+  arc %>% 
+  filter(scrTopCat=='Violation/Infraction') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(dsm, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat=='Violation/Infraction') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+     mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('[.][0-9]{1,}[0][%]', .), gsub('(.*)([0])([%])', '\\1\\3', .), .))) %>% 
+  arrange(Year)
+
+```
+
+
+```{r, echo=F}
+# misdemeanor release status #
+
+ror_m_num <- 
+   arc %>% 
+  filter(mvi == 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(ror, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+ # mutate_at(vars(2,3), list(~comma(.))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+
+
+ror_m <- 
+   arc %>% 
+  filter(mvi == 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(ror, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(mvi==1, is.na(arcDispo)) %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+   mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+   mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+ #  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+   mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+
+ror_m_final <-bind_rows(ror_m_num, ror_m)
+ror_m_final[is.na(ror_m_final)] = '-'
+
+
+
+
+
+sr_m_num <- 
+  arc %>% 
+  filter(mvi == 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(supervised, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy = 0.01)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>%
+    mutate_at(vars(5), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+ # mutate_at(vars(2,3), list(~comma(.))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+sr_m <- 
+  arc %>% 
+  filter(mvi == 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(supervised, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(mvi==1, is.na(arcDispo)) %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+ #  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+ mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+
+sr_m_final <-bind_rows(sr_m_num, sr_m)
+sr_m_final[is.na(sr_m_final)] = '-'
+
+```
+
+
+```{r, echo=F}
+
+vol_f <-
+  arc %>% 
+  filter(scrTopCat == 'Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = n_distinct(defendantID)) %>% 
+  spread(arcYear, volume) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(as.numeric(.), big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year) 
+  
+
+
+```
+
+
+```{r, echo=F}
+br_f <- 
+  arc %>%  
+  filter(scrTopCat == 'Felony' & bailReqAmt > 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(bailreq = median(bailReqAmt,na.rm = TRUE)) %>% 
+  spread(arcYear, bailreq) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 - 2022, USD)' = `2022`-`2021`) %>% 
+  gather('Year', 'bailreq', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  mutate(bailreq = dollar(bailreq)) %>% 
+  spread(arcMonth, bailreq, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 - 2022, USD)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(.=='$NA', '-', .))) %>% 
+  arrange(Year)
+
+
+
+bs_f <- 
+  arc %>% 
+  filter(scrTopCat == 'Felony' & bailSetAmt > 1) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(bailset = median(bailSetAmt,na.rm = TRUE)) %>% 
+  spread(arcYear, bailset) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 - 2022, USD)' = `2022`-`2021`) %>% 
+  gather('Year', 'bailset', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  mutate(bailset = dollar(bailset)) %>% 
+  spread(arcMonth, bailset, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 - 2022, USD)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(.=='$NA', '-', .))) %>% 
+  arrange(Year)
+
+br_f_num <- 
+  arc %>% 
+  filter(scrTopCat == 'Felony'& (bailReqAmt > 1 | arcRelease=='Remand')) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = n_distinct(defendantID)) %>% 
+  spread(arcYear, volume) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  # mutate_at(vars(2,3), list(~comma(.))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+bs_f_num <- 
+  arc %>% 
+  filter(scrTopCat == 'Felony'& (bailSetAmt > 1 | arcRelease=='Remand')) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = n_distinct(defendantID)) %>% 
+  spread(arcYear, volume) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+ # mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Total'))) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+```
+
+
+
+```{r, echo=F}
+#felony pleas#
+
+plea_ff <- 
+  arc %>% 
+  filter(scrTopCat == 'Felony'& arcTopCat== 'Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Felony') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('[.][0]{1,}$', '', .))) %>% 
+  arrange(Year)
+
+
+
+
+
+
+# make sure to comment out line of replace(is.na) and mutate_at(7: ncol)
+
+plea_fm_num <- 
+   arc %>% 
+  filter(scrTopCat == 'Felony' & arcTopCat== 'Misdemeanor')   %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+    mutate(`2020` = if_else(is.na(`2020`), 0, `2020`)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .))) %>% 
+#  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NaN', .), '-', .))) 
+#  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('\\<0\\>', .), '-', .))) %>%    
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('100', .), '-', .))) %>% 
+  arrange(Year)
+
+
+  
+
+plea_fm <- 
+  arc %>% 
+  filter(scrTopCat == 'Felony' & arcTopCat== 'Misdemeanor') %>% 
+    group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Felony') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>%
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(`2020` = if_else(is.na(`2020`), 0, `2020`)) %>% 
+  # replace(is.na(.), 0) %>%
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+ mutate('Change (2021 to 2022, Percentage Pts)' =  round((`2021`-`2020`),4)*100) %>% 
+ mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  # mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+    # mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('[.][0-9]{1,}[0][%]', .), gsub('(.*)([0])([%])', '\\1\\3', .), .))) %>% 
+  # mutate_at(vars(11), list(~ifelse(grepl('-', .), '0', .))) %>% 
+  # mutate_at(vars(12:ncol(.)-1), list(~ifelse(grepl('\\b0%\\b', .), '-', .))) %>% 
+  # mutate_at(vars(14:ncol(.)-1), list(~ifelse(grepl('-', .), '-', .))) %>% 
+  arrange(Year)
+
+
+plea_fm_final <-bind_rows(plea_fm_num, plea_fm)
+plea_fm_final[is.na(plea_fm_final)] = '-'
+
+
+
+
+# plea_fv_num <- plea_fv_num %>%  plea_fv_num[nrow(plea_fv_num) + 1,] = c("05","0", "0")
+
+plea_fv_num <- 
+   arc %>% 
+  filter(scrTopCat == 'Felony' & arcTopCat== 'Violation/Infraction')  %>%
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Felony') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth'), all = T) %>% 
+  select(-tot) %>% 
+  replace(is.na(.), 0) %>%
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+ # mutate_at(vars(2,3), list(~comma(.))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NaN', .), '-', .))) %>% 
+  arrange(Year)
+
+
+plea_fv <- 
+  arc %>% 
+  filter(scrTopCat == 'Felony' & arcTopCat== 'Violation/Infraction') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(plea, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Felony') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth'), all = T) %>% 
+  mutate(rate = ifelse(is.na(num), 0, num)/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+ mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+    mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('[.][0-9]{1,}[0][%]', .), gsub('(.*)([0])([%])', '\\1\\3', .), .))) %>% 
+  arrange(Year)
+
+
+plea_fv_final <-bind_rows(plea_fv_num, plea_fv)
+plea_fv_final[is.na(plea_fv_final)] = '-'
+plea_fv_final <- plea_fv_final[c("Year", "01", "02", "03", "04", "05",
+                                 "06","07","08","09","10","11", "12",
+                                 "Average (Jan-Feb)", "Total (Jan-Feb)")]
+
+```
+
+```{r, echo = F}
+
+acd_f_num  <- 
+   arc %>% 
+  filter(scrTopCat == 'Felony')   %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(acd, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  # replace(is.na(.), 0) %>%
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NaN', .), '-', .))) %>% 
+  arrange(Year)
+
+
+
+
+acd_f <- 
+    arc %>% 
+  filter(scrTopCat == 'Felony') %>% 
+   group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(acd, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Felony') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+ mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+ mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+    mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('[.][0-9]{1,}[0][%]', .), gsub('(.*)([0])([%])', '\\1\\3', .), .))) %>% 
+  arrange(Year)
+
+
+acd_f_final <-bind_rows(acd_f_num, acd_f)
+acd_f_final[is.na(acd_f_final)] = '-'
+
+
+
+
+
+dsm_f_num  <- 
+   arc %>% 
+  filter(scrTopCat == 'Felony')   %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(dsm, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  # replace(is.na(.), 0) %>%
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NaN', .), '-', .))) %>% 
+  arrange(Year)
+
+
+
+
+dsm_f <- 
+    arc %>% 
+  filter(scrTopCat == 'Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(dsm, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat == 'Felony') %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+ mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%    gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+    mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('[.][0-9]{1,}[0][%]', .), gsub('(.*)([0])([%])', '\\1\\3', .), .))) %>% 
+  arrange(Year)
+
+
+dsm_f_final <-bind_rows(dsm_f_num, dsm_f)
+dsm_f_final[is.na(dsm_f_final)] = '-'
+
+```
+
+
+
+```{r, echo=F}
+# felony survived - release statuses #
+
+ror_f_num <- 
+   arc %>% 
+  filter(scrTopCat=='Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(ror, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+
+ror_f <- 
+ arc %>% 
+  filter(scrTopCat=='Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(ror, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat=='Felony', is.na(arcDispo)) %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>%
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+ mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+ mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+ mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+
+ror_f_final <-bind_rows(ror_f_num, ror_f)
+ror_f_final[is.na(ror_f_final)] = '-'
+
+
+
+
+sr_f_num <- 
+   arc %>% 
+  filter(scrTopCat=='Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(supervised, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('Inf', .), '-', .))) %>% 
+  arrange(Year)
+
+sr_f <- 
+   arc %>% 
+  filter(scrTopCat=='Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(supervised, na.rm=TRUE)) %>% 
+  merge(., arc %>% 
+            filter(scrTopCat=='Felony', is.na(arcDispo)) %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>% 
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+  mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+ mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+
+sr_f_final <-bind_rows(sr_f_num, sr_f)
+sr_f_final[is.na(sr_f_final)] = '-'
+
+
+
+
+
+remand_f_num <- 
+   arc %>% 
+  mutate(remand = ifelse(arcRelease=='Remand', 1, 0)) %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(remand, na.rm=TRUE)) %>% 
+  spread(arcYear, num) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) sum(.[1:2]) else "Total (Jan-Feb)"))) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) floor(mean(.[1:2])) else "Average (Jan-Feb)"))) %>% 
+  # adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy=0.01)) %>%
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+remand_f <-
+  arc %>% 
+  mutate(remand = ifelse(arcRelease=='Remand', 1, 0)) %>% 
+  filter(scrTopCat == 'Felony') %>% 
+  group_by(arcYear, arcMonth) %>% 
+  summarise(num = sum(remand,na.rm = TRUE)) %>% 
+    merge(., arc %>% 
+            filter(scrTopCat=='Felony', is.na(arcDispo)) %>% 
+            group_by(arcYear, arcMonth) %>% 
+            summarise(tot = n_distinct(defendantID)), by.x = c('arcYear', 'arcMonth')) %>% 
+  mutate(rate = num/tot) %>% 
+  select(-num, -tot) %>% 
+  spread(arcYear, rate) %>%
+  mutate(arcMonth = factor(arcMonth)) %>% 
+  bind_rows(summarise_all(., funs(if(is.numeric(.)) median(.[1:2],na.rm = TRUE) else "Average (Jan-Feb)"))) %>% 
+ mutate('Change (2021 to 2022, Percentage Pts)' = round((`2022`-`2021`),4)*100) %>% 
+  mutate_at(vars(2,3,4), list(~sprintf("%.2f%%", 100*.))) %>%  
+  gather('Year', 'rate', 2:ncol(.)) %>% 
+#  mutate(arcMonth = factor(arcMonth, levels = c('1', '2', '3','4','5','6','7','8','9','10','11','12', 'Average (Jan-Feb)'))) %>%
+  spread(arcMonth, rate, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', 'Change (2021 to 2022, Percentage Pts)'))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  mutate_at(vars(2:ncol(.)), list(~gsub('(.*)([.])([0]){1,}([%])$', '\\1\\4', .)))%>% 
+  arrange(Year)
+
+
+remand_f_final <-bind_rows(remand_f_num, remand_f)
+remand_f_final[is.na(remand_f_final)] = '-'
+
+```
+
+
+```{r, echo=F, warning = FALSE}
+
+ top5mvi <-   
+  arc %>% 
+      filter(mvi==1, arcMonth >= '01') %>% 
+      group_by(arcYear = as.character(arcYear), scrTopCMID) %>% 
+      dplyr::summarise(n = n_distinct(defendantID)) %>% 
+      arrange(desc(n)) %>% 
+      top_n(5) %>% 
+ merge(., chgs, 
+       by = 'scrTopCMID', all.x = T) %>% 
+  select(arcYear, scrTopDetail, cases = n) %>% 
+  mutate(arcYear = ifelse(arcYear == "2022", "2022 to date", arcYear)) %>% 
+  group_by(arcYear) %>% 
+  mutate( Rank = rank(-cases)) %>% 
+  select('Year' = arcYear, Rank, Charge = scrTopDetail, Cases = cases) %>% 
+  arrange(Year, Rank)
+
+
+ top5fel <-   
+  arc %>% 
+      filter(scrTopCat == 'Felony', arcMonth >='01') %>% 
+       group_by(arcYear = as.character(arcYear), scrTopCMID) %>% 
+      dplyr::summarise(n = n_distinct(defendantID)) %>% 
+      arrange(desc(n)) %>% 
+      top_n(5) %>% 
+ merge(., chgs, 
+       by = 'scrTopCMID', all.x = T) %>% 
+  select(arcYear, scrTopDetail, cases = n) %>% 
+  mutate(arcYear = ifelse(arcYear == "2022", "2022 to date", arcYear)) %>% 
+  group_by(arcYear) %>% 
+   mutate( Rank = rank(-cases, ties.method = 'min')) %>% 
+  select('Year' = arcYear, Rank, Charge = scrTopDetail, Cases = cases) %>% 
+  arrange(Year, Rank)
+
+
+```
+
+```{r, echo=F}
+
+qualify_m <-
+  arc %>% 
+  filter(mvi == 1 & isBailQualified == 1) %>%
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = floor(sum(c(ror, supervised), na.rm=TRUE))) %>%
+  spread(arcYear, volume) %>% 
+  adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+
+qualify_f <-
+  arc %>% 
+  filter(scrTopCat=='Felony' & isBailQualified == 1) %>%
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = as.integer(sum(c(ror, supervised), na.rm=TRUE))) %>%
+  spread(arcYear, volume) %>% 
+  adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=",")))  %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+
+
+qualify_m_total <-
+  arc %>% 
+  filter(mvi == 1 & isBailQualified == 1) %>%
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = floor(sum(n_distinct(defendantID), na.rm=TRUE))) %>%
+  spread(arcYear, volume) %>% 
+  adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+
+qualify_f_total <-
+  arc %>% 
+  filter(scrTopCat=='Felony' & isBailQualified == 1) %>%
+  group_by(arcYear, arcMonth) %>% 
+  summarise(volume = floor(sum(n_distinct(defendantID), na.rm=TRUE))) %>%
+  spread(arcYear, volume) %>% 
+  adorn_totals("row") %>% 
+  mutate('% Change (2021 - 2022)' = percent((`2022`-`2021`)/`2021`, accuracy = 0.01)) %>% 
+  mutate_at(vars(2,3,4), funs(prettyNum(., big.mark=","))) %>% 
+  gather('Year', 'Volume', 2:ncol(.)) %>% 
+  spread(arcMonth, Volume, fill = '-') %>% 
+  mutate(Year = factor(Year, levels = c('2020','2021', '2022', '% Change (2021 - 2022)'))) %>%
+  mutate_at(vars(2:ncol(.)), list(~ifelse(grepl('NA', .), '-', .))) %>% 
+  arrange(Year)
+```
+
+# Executive Summary
+
+\onehalfspacing
+
+This report provides year-over-year comparisons of key arraignment statistics, beginning January 1, 2021. Please take note of the following definitions: 
+
+
+ - _\% Change_ reflects the increase or decrease in defendants arraigned as a proportion of defendants arraigned the previous year.
+    - Example: a change in defendants arraigned from 5,000 in 2021 to 1,000 in 2022 indicates an 80\% decrease in defendants arraigned from 2021 to 2022.
+   
+ - _Change (2021 - 2022, USD)_ reflects the arithmetic change in USD in bail requested or set from the previous year to the current year. 
+    - Example: a change in median bail requested from \$5,000 in 2021 to \$4,000 in 2022 indicates that on Average (Jan-Feb) we have reduced bail request amount by \$1,000 from 2021 to 2022. 
+    
+ - _Change (Percentage Pts)_ reflects the arithmetic difference in e.g. proportion of misdemeanor pleas from the previous year to the current year. 
+    - Example: a change in misdemeanor pleas from 10 out of 100 arraigned (10%) in 2021 to 15 out of 50 arraigned (30%) in 2022 indicates a 20 _percentage point_ increase in misdemeanor pleas from 2021 to 2022.
+
+ 
+
+# Misdemeanor/Violation/Infraction Arraignments
+
+## Volume
+
+```{r, echo=F}
+vol_m %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Volume of Misdemeanor/Violation/Infraction Defendants Arraigned") %>%
+  kable_styling(latex_options = c("scale_down","striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+
+
+```
+
+\blandscape
+
+## Desk Appearance Tickets
+
+
+```{r, echo=F}
+dat_m %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Number of DATs Arraigned - Misdemeanor/Violation/Infraction Defendants") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) %>% 
+  footnote(general = 'This table reflects DAT cases arraigned where no bench warrant was ordered at a previous arraignment date.', 
+           threeparttable = T) 
+```  
+
+```{r, echo=F}
+datbwo_m %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Number of DATs Issued and Not Arraigned - Misdemeanor/Violation/Infraction Defendants") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) %>% 
+  footnote(general = 'This table reflects DAT cases where a bench warrant was ordered at arraignment. Note that many of these defendants were later arraigned in criminal court.',
+           threeparttable = T)
+
+```  
+
+
+\elandscape
+
+## Top 5 Misdemeanor/Violation/Infraction Charges
+
+```{r, echo = F, warning = F}
+
+top5mvi %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Top 5 Misdemeanor/Violation/Infraction Charges") %>%
+  kable_styling(latex_options = c("HOLD_position")) %>% 
+ column_spec(c(1:4), width = '4cm') %>% 
+ collapse_rows(columns = 1, valign = 'top')
+
+
+```
+
+\blandscape
+
+\large\textbf{Bail}
+
+```{r, echo =F}
+br_m %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Bail Request on Misdemeanor/Violation/Infraction Defendants Arraigned") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+```
+
+```{r, echo=F}
+bs_m %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Bail Set on Misdemeanor/Violation/Infraction Defendants Arraigned") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+```
+
+```{r, echo=F}  
+br_m_num %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Number of Cases Had Bail Request - Misdemeanor/Violation/Infraction Defendants") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+```
+
+```{r, echo=F}  
+bs_m_num %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Number of Cases Had Bail Set - Misdemeanor/Violation/Infraction Defendants") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+```
+
+\large\textbf{Release Status}
+
+
+```{r, echo=F}
+ror_m_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "ROR - Misdemeanor/Violation/Infraction Defendants Surviving Arraignment") %>%
+  kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+  column_spec(1, width = '4cm') %>% 
+  group_rows("Number of ROR", 1, 4) %>% 
+  group_rows("Rate of ROR", 5, 7) 
+
+```
+
+
+```{r, echo=F}
+sr_m_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Supervised Release - Misdemeanor/Violation/Infraction Defendants Surviving Arraignment") %>%
+  kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+  column_spec(1, width = '4cm') %>% 
+  group_rows("Number of Supervised Release", 1, 4) %>% 
+  group_rows("Rate of Supervised Release", 5, 7) 
+```
+
+```{r, echo=F}
+qualify_m_total %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Volume of Misdemeanor/Violation/Infraction Defendants Arraigned on a Qualifying Offense") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+
+
+qualify_m %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Volume of Misdemeanor/Violation/Infraction Defendants Arraigned on a Qualifying Offense with a Release Status of ROR or Supervised Release") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+
+
+```
+
+\elandscape
+
+\blandscape
+\large\textbf{Dispositions}
+
+```{r, echo=F}
+plea_mm_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Misdemeanor Pleas - Misdemeanor Defendants Arraigned") %>%
+  kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+  column_spec(1, width = '4cm') %>% 
+  group_rows("Number of Misdemeanor Pleas", 1, 4) %>% 
+  group_rows("Rate of Misdemeanor Pleas", 5, 7) 
+```
+
+```{r, echo=F}
+plea_mv_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Violation/Infraction Pleas - Misdemeanor Defendants Arraigned") %>%
+kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+  column_spec(1, width = '4cm') %>% 
+  group_rows("Number of Violation/Infraction Pleas", 1, 4) %>% 
+  group_rows("Rate of Violation/Infraction Pleas", 5, 7) 
+```
+
+```{r, echo=F}
+plea_vv_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Violation/Infraction Pleas - Violation/Infraction Defendants Arraigned") %>%
+     kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+      column_spec(1, width = '4cm') %>% 
+      group_rows("Number of Violation/Infraction Pleas", 1, 4) %>% 
+      group_rows("Rate of Violation/Infraction Pleas", 5, 7) 
+```
+
+```{r, echo=F}
+acd_m_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "ACDs - Misdemeanor/Violation/Infraction Defendants Arraigned") %>%
+     kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+      column_spec(1, width = '4cm') %>% 
+      group_rows("Number of ACDs", 1, 4) %>% 
+      group_rows("Rate of ACDs", 5, 7) 
+
+```
+
+
+```{r, echo=F}
+dsm_m_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Dismissals - Misdemeanor/Violation/Infraction Defendants Arraigned") %>%
+      kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+      column_spec(1, width = '4cm') %>% 
+      group_rows("Number of Dismissals", 1, 4) %>% 
+      group_rows("Rate of Dismissals", 5, 7) 
+
+```
+
+
+\elandscape
+
+\blandscape
+\large\textbf{Felony Arraignments}
+
+
+## Volume
+
+```{r, echo=F}
+vol_f %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Volume of Felony Defendants Arraigned") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+
+
+```
+
+
+## Desk Appearance Tickets
+
+
+```{r, echo=F}
+dat_f %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Number of DATs Arraigned - Felony Defendants") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) %>% 
+  footnote(general = 'This table reflects DAT cases arraigned where no bench warrant was ordered at a previous arraignment date.', 
+           threeparttable = T)
+
+```  
+
+```{r, echo=F}
+
+datbwo_f %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Number of DATs Issued and Not Arraigned - Felony Defendants") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) %>% 
+  footnote(general = 'This table reflects DAT cases where a bench warrant was ordered at arraignment. Note that many of these defendants were later arraigned in criminal court.',
+           threeparttable = T)
+
+```  
+
+\elandscape
+
+\large\textbf{Top 5 Felony Charges}
+
+
+```{r, echo = F, warning = F}
+
+
+kable(top5fel,format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(top5fel))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Top 5 Felony Charges") %>%
+  kable_styling(latex_options = c("HOLD_position")) %>% 
+ column_spec(c(1:4), width = '4cm') %>% 
+ collapse_rows(columns = 1, valign = 'top')
+  
+
+
+```
+
+
+\blandscape
+
+\large\textbf{Bail}
+
+```{r, echo=F}
+br_f %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Bail Request on Felony Defendants Arraigned") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+```
+
+```{r, echo=F}  
+bs_f %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Bail Set on Felony Defendants Arraigned") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+```
+
+```{r, echo=F}  
+br_f_num %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Number of Cases Had Bail Request (Remand Included) - Felony Defendants") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+```
+
+```{r, echo=F}  
+bs_f_num %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Number of Cases Had Bail Set (Remand Included) - Felony Defendants") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+```
+\large\textbf{Release Status}
+
+```{r, echo=F}
+
+ror_f_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "ROR - Felony Defendants Surviving Arraignment") %>%
+      kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+     column_spec(1, width = '4cm') %>% 
+     group_rows("Number of ROR", 1, 4) %>% 
+     group_rows("Rate of ROR", 5, 7) 
+```
+
+```{r, echo=F}
+sr_f_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Supervised Release - Felony Defendants Surviving Arraignment") %>%
+      kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+     column_spec(1, width = '4cm') %>% 
+     group_rows("Number of Supervised Release", 1, 4) %>% 
+     group_rows("Rate of Supervised Release", 5, 7) 
+```  
+
+```{r, echo=F}
+
+qualify_f_total %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Volume of Felony Defendants Arraigned on a Qualifying Offense") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+
+qualify_f %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Volume of Felony Defendants Arraigned on a Qualifying Offense with a Release Status of ROR or Supervised Release") %>%
+  kable_styling(latex_options = c("striped","HOLD_position")) %>% 
+  group_rows("Time Frame", 1, 3) 
+
+
+```
+
+```{r, echo=F}
+
+remand_f_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "", 
+      caption = "Remand (Dollar Bail Excluded) - Felony Defendants Surviving Arraignment") %>%
+      kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+     column_spec(1, width = '4cm') %>% 
+     group_rows("Number of Remand", 1, 4) %>% 
+     group_rows("Rate of Remand", 5, 7) 
+
+```
+
+\newpage
+\large\textbf{Dispositions}
+
+Note: No cases screened as felonies took a plea at arraignment to a felony top charge. 
+
+```{r, echo = F}
+
+plea_fm_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Misdemeanor Pleas - Felony Defendants Arraigned") %>%
+      kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+     column_spec(1, width = '4cm') %>% 
+     group_rows("Number of Misdemeanor Pleas", 1, 4) %>% 
+     group_rows("Rate of Misdemeanor Pleas", 5, 7) 
+```
+
+```{r, echo=F}
+plea_fv_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Violation Pleas - Felony Defendants Arraigned") %>%
+      kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+     column_spec(1, width = '4cm') %>% 
+     group_rows("Number of Violation Pleas", 1, 4) %>% 
+     group_rows("Rate of Violation Pleas", 5, 7) 
+```
+
+
+```{r, echo=F}
+acd_f_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "ACDs - Felony Defendants Arraigned") %>%
+      kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+     column_spec(1, width = '4cm') %>% 
+     group_rows("Number of ACDs", 1, 4) %>% 
+     group_rows("Rate of ACDs", 5, 7) 
+
+```
+
+
+```{r, echo=F}
+
+dsm_f_final %>% 
+kable(format = "latex",booktabs = T,
+      align = c("l",rep("c",ncol(.))),digits = 0,
+      format.args = list(big.mark = ","),linesep = "",
+      caption = "Dismissals - Felony Defendants Arraigned") %>%
+      kable_styling(latex_options = c("striped","scale_down","HOLD_position"),stripe_index = c(4,8)) %>% 
+     column_spec(1, width = '4cm') %>% 
+     group_rows("Number of Dismissals", 1, 4) %>% 
+     group_rows("Rate of Dismissals", 5, 7) 
+
+```
+
+
+\elandscape
